@@ -115,3 +115,42 @@ contract Musha {
 
         emit CapsuleForged(id, msg.sender, unlockTime, stake, commitment);
     }
+
+    /**
+     * Crack a capsule after `unlockTime` by providing:
+     * - `secret`: arbitrary bytes32 chosen offchain.
+     * Commitment rule: keccak256(abi.encodePacked(secret, msg.sender)) must match.
+     */
+    function crackCapsule(bytes32 id, bytes32 secret) external notPaused {
+        Capsule storage c = _capsules[id];
+        if (c.creator == address(0)) revert Musha_ZeroCommitment();
+        if (c.claimed) revert Musha_AlreadyClaimed();
+        if (block.timestamp < c.unlockTime) revert Musha_TooEarly(c.unlockTime);
+
+        bytes32 h = keccak256(abi.encodePacked(secret, msg.sender));
+        if (h != c.commitment) revert Musha_WrongSecret();
+
+        c.claimed = true;
+
+        uint256 payout = uint256(c.stake);
+        (bool ok, ) = msg.sender.call{value: payout}("");
+        if (!ok) revert Musha_TransferFailed();
+
+        emit CapsuleCracked(id, msg.sender, keccak256(abi.encodePacked(secret)));
+    }
+
+    /**
+     * Scrap a capsule; returns stake to creator (fee is non-refundable).
+     */
+    function scrapCapsule(bytes32 id) external notPaused {
+        Capsule storage c = _capsules[id];
+        if (c.creator != msg.sender) revert Musha_NotCreator();
+        if (c.claimed) revert Musha_AlreadyClaimed();
+
+        c.claimed = true;
+
+        uint256 refund = uint256(c.stake);
+        (bool ok, ) = msg.sender.call{value: refund}("");
+        if (!ok) revert Musha_TransferFailed();
+
+        emit CapsuleScrapped(id, msg.sender);
